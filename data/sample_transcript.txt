@@ -1,0 +1,66 @@
+Sprint Planning Meeting – Team Orion
+Date: 2026-03-03  |  Attendees: Alice (PM), Bob (Backend), Carol (Frontend), Dave (QA), Eve (DevOps)
+
+--- TRANSCRIPT ---
+
+Alice: Good morning everyone. Let's kick off sprint 14 planning. We have four main areas to cover today: the new user onboarding flow, the payment service refactor, infrastructure upgrades, and a quick retrospective from last sprint.
+
+Carol: Sounds good. I have a few open questions on the onboarding designs I'd like to discuss.
+
+--- Topic: User Onboarding Flow ---
+
+Alice: The design team handed off the Figma mockups on Friday. Carol, can you own the frontend implementation of the onboarding screens?
+
+Carol: Yes, I can take that. I'll need the API contract from Bob before I can start the form submission logic.
+
+Bob: I can have the onboarding API spec documented and shared in Confluence by end of day Wednesday.
+
+Alice: Great. Dave, we'll need regression tests for the new onboarding funnel once Carol has a staging build.
+
+Dave: Sure. I'll write the test plan and automate the happy-path scenarios. I'll aim to have a draft ready by next Friday.
+
+Carol: One thing — we still need the legal team to approve the updated privacy notice text before we go live.
+
+Alice: I'll follow up with legal and get their sign-off. Target is end of this week.
+
+--- Topic: Payment Service Refactor ---
+
+Bob: The payment service is currently a monolith and we need to break out the billing module into its own microservice. I'm planning to start the extraction this sprint.
+
+Alice: Bob, can you put together a technical design doc for the billing microservice extraction?
+
+Bob: I'll draft it and share it for review. Should be done by Thursday.
+
+Eve: Once the design is approved, I'll need to set up the new Kubernetes namespace and CI/CD pipeline for the billing service.
+
+Alice: Eve, please get that infrastructure provisioned within two days of Bob sharing the design doc.
+
+Dave: I'll coordinate with Bob to define integration test criteria for the billing service cutover. No hard deadline yet on that one.
+
+--- Topic: Infrastructure Upgrades ---
+
+Eve: We're running Kubernetes 1.27 which is end-of-life next month. We need to upgrade the cluster to 1.30 before March 31st.
+
+Alice: Eve, please own the cluster upgrade. Schedule a maintenance window and communicate to the team at least three days in advance.
+
+Eve: Will do. I'll also update the runbook. I'm targeting the upgrade for the weekend of March 21st.
+
+Bob: Should we freeze deployments during the upgrade window?
+
+Alice: Yes, I'll send a deployment freeze notice to the team. Bob, can you also make sure the database migration scripts are tested in staging before the freeze?
+
+Bob: I'll make sure that's done before March 18th.
+
+--- Topic: Retrospective Action Items from Last Sprint ---
+
+Alice: We agreed last sprint to improve our PR review turnaround. The average was 3 days, we want it under 24 hours.
+
+Carol: I'll set up a Slack reminder bot that pings reviewers after 4 hours of inactivity on a PR.
+
+Alice: Carol, please have the Slack bot deployed and tested by end of sprint.
+
+Dave: I'll also update the team working agreement doc to codify the 24-hour SLA.
+
+Alice: Alright, I think that covers everything. Let's wrap up. Thanks everyone!
+
+--- END OF TRANSCRIPT ---
