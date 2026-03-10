@@ -1,5 +1,6 @@
 import json
 
+from src.events import emit
 from src.logger import log_message
 from src.schema import ACPMessage, BusState, MsgType, Role
 
@@ -11,20 +12,19 @@ def validator_agent(state: BusState) -> dict:
     retry_count = state.get("retry_count", 0)
 
     print(f"\n[Validator] Validating {len(items)} action items...")
+    emit("agent_start", {"agent": "validator", "step": state["step"] + 1,
+                         "message": f"Validating {len(items)} action items..."})
 
     issues: list[str] = []
 
-    # Rule 1: every item must have a non-empty owner
     for i, item in enumerate(items):
         if not item.get("owner"):
             issues.append(f"Item {i} ('{item.get('description', '')}') is missing an owner.")
 
-    # Rule 2: every item must have a non-empty deadline
     for i, item in enumerate(items):
         if not item.get("deadline"):
             issues.append(f"Item {i} ('{item.get('description', '')}') is missing a deadline.")
 
-    # Rule 3: no duplicate descriptions (case-insensitive)
     seen: dict[str, int] = {}
     for i, item in enumerate(items):
         desc = item.get("description", "").lower().strip()
@@ -50,6 +50,14 @@ def validator_agent(state: BusState) -> dict:
         )
         log_message(msg)
 
+        emit("acp_message", {
+            "sender": "validator", "receiver": "executor", "msg_type": "validation_fail",
+            "content_preview": f"{len(issues)} issue(s) found — requesting retry {retry_count + 1}/{MAX_RETRIES}",
+            "meta": msg.meta, "step": state["step"] + 1,
+        })
+        emit("agent_done", {"agent": "validator", "step": state["step"] + 1,
+                            "summary": f"{len(issues)} issue(s) found. Retry {retry_count + 1}/{MAX_RETRIES}."})
+
         return {
             "validation_issues": issues,
             "mailbox": [msg.model_dump()],
@@ -73,6 +81,15 @@ def validator_agent(state: BusState) -> dict:
             trace={"step": state["step"] + 1},
         )
         log_message(msg)
+
+        emit("acp_message", {
+            "sender": "validator", "receiver": "user", "msg_type": "validation_pass",
+            "content_preview": f"{len(items)} items validated and delivered",
+            "meta": msg.meta, "step": state["step"] + 1,
+        })
+        emit("action_items", {"items": items})
+        emit("agent_done", {"agent": "validator", "step": state["step"] + 1,
+                            "summary": f"All {len(items)} items validated successfully."})
 
         return {
             "validation_issues": issues,

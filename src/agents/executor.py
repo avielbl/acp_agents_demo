@@ -1,5 +1,6 @@
 import json
 
+from src.events import emit
 from src.llm import generate
 from src.logger import log_message
 from src.schema import ACPMessage, BusState, MsgType, Role
@@ -12,13 +13,20 @@ def executor_agent(state: BusState) -> dict:
 
     if issues:
         print(f"\n[Executor] Re-extracting action items (retry {retry}). Issues to fix: {issues}")
+        emit("agent_start", {"agent": "executor", "step": state["step"] + 1, "retry": retry,
+                             "message": f"Re-extracting action items (retry {retry}/{2}). Fixing {len(issues)} issue(s)."})
     else:
         print("\n[Executor] Extracting action items from each segment...")
+        emit("agent_start", {"agent": "executor", "step": state["step"] + 1, "retry": 0,
+                             "message": f"Extracting action items from {len(segments)} segment(s)..."})
 
     issues_str = "\n".join(f"- {i}" for i in issues) if issues else "None"
     all_items: list[dict] = []
 
     for idx, segment in enumerate(segments):
+        emit("progress", {"agent": "executor", "current": idx + 1, "total": len(segments),
+                          "message": f"Processing segment {idx + 1} of {len(segments)}..."})
+
         prompt = (
             "Extract all action items from the following meeting transcript segment. "
             "Return ONLY a JSON array of objects with keys: "
@@ -36,7 +44,11 @@ def executor_agent(state: BusState) -> dict:
             lines = cleaned.splitlines()
             cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
-        items = json.loads(cleaned)
+        try:
+            items = json.loads(cleaned)
+        except json.JSONDecodeError:
+            items = []
+
         for item in items:
             item["segment_id"] = idx
         all_items.extend(items)
@@ -52,6 +64,14 @@ def executor_agent(state: BusState) -> dict:
         trace={"step": state["step"] + 1},
     )
     log_message(msg)
+
+    emit("acp_message", {
+        "sender": "executor", "receiver": "validator", "msg_type": "result",
+        "content_preview": f"{len(all_items)} action items extracted",
+        "meta": msg.meta, "step": state["step"] + 1,
+    })
+    emit("agent_done", {"agent": "executor", "step": state["step"] + 1,
+                        "summary": f"Extracted {len(all_items)} action items."})
 
     return {
         "action_items": all_items,

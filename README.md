@@ -89,10 +89,14 @@ acp_agents_demo/
 │   ├── llm.py                  # Gemini 2.0 Flash singleton
 │   ├── logger.py               # JSONL structured audit logger
 │   ├── graph.py                # LangGraph StateGraph + SqliteSaver
+│   ├── events.py               # Thread-safe SSE event emitter (ContextVar)
 │   └── agents/
 │       ├── planner.py          # Segment transcript into topics
 │       ├── executor.py         # Extract action items per segment
 │       └── validator.py        # Validate completeness, flag issues
+├── static/
+│   └── index.html              # Single-page demo UI (SVG graph + live feed)
+├── server.py                   # FastAPI server with SSE streaming
 ├── main.py                     # CLI entry point
 ├── requirements.txt
 └── .env.example
@@ -120,15 +124,19 @@ cp .env.example .env
 
 Get a free Gemini API key at [aistudio.google.com](https://aistudio.google.com/app/apikey).
 
-### 3. Run with the sample transcript
+### 3. Launch the web UI (recommended)
+
+```bash
+uvicorn server:app --reload
+```
+
+Then open **http://localhost:8000** in your browser. The sample transcript is pre-loaded — click **▶ Run Pipeline** to watch the agents communicate in real time.
+
+### 4. Run the CLI instead
 
 ```bash
 python main.py
-```
-
-### 4. Run with your own transcript
-
-```bash
+# or with a custom transcript:
 python main.py --transcript path/to/your/meeting.txt
 ```
 
@@ -216,15 +224,51 @@ Each agent function is a pure `(state) -> dict` — it reads from state and retu
 
 ---
 
+## Web UI
+
+The demo ships with a single-page browser UI served by FastAPI:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Header: title + live run status                            │
+├──────────────────────┬──────────────────────────────────────┤
+│  Transcript input    │  Agent Communication Graph (SVG)     │
+│  + Upload / Run btn  │                                      │
+│                      │  [Planner] ──task──► [Executor]      │
+│                      │               ◄──retry──  ▼ result  │
+│                      │                       [Validator]    │
+│                      │                           │ pass     │
+│                      │                         [OUT]        │
+├──────────────────────┼──────────────────────────────────────┤
+│  ACP Message Log     │  Final Action Items Table            │
+│  (live, newest-top)  │  (populates on completion)           │
+└──────────────────────┴──────────────────────────────────────┘
+```
+
+**How it works:**
+1. The browser POSTs the transcript to `POST /run` → receives a `run_id`.
+2. It opens a **Server-Sent Events** stream at `GET /stream/{run_id}`.
+3. The pipeline runs in a `ThreadPoolExecutor` thread; agents call `emit()` via a `ContextVar`-injected emitter.
+4. Events are pushed into an `asyncio.Queue` and forwarded to the browser as named SSE events.
+5. The SVG graph animates `animateMotion` packet-dots along SVG paths for each `acp_message` event; agent nodes pulse while active.
+
+**SSE event types:** `agent_start`, `agent_done`, `acp_message`, `progress`, `action_items`, `done`, `error`.
+
+---
+
 ## Dependencies
 
 | Package | Purpose |
 |---|---|
 | `langgraph` | StateGraph, checkpointing, conditional routing |
+| `langgraph-checkpoint-sqlite` | SQLite checkpointer for LangGraph |
 | `langchain-core` | Base abstractions used by LangGraph |
 | `google-generativeai` | Gemini 2.0 Flash LLM client |
 | `pydantic` | `ACPMessage` and `ActionItem` validation |
 | `python-dotenv` | `.env` file loading |
+| `fastapi` | Web server and SSE streaming for the demo UI |
+| `uvicorn[standard]` | ASGI server |
+| `aiofiles` | Async static file serving |
 
 ---
 
