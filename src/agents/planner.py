@@ -48,6 +48,7 @@ def planner_agent(state: BusState) -> dict:
     emit("acp_message", {
         "sender": "planner", "receiver": "executor", "msg_type": "task",
         "content_preview": f"{len(segments)} segments dispatched",
+        "content": msg.content,
         "meta": msg.meta, "step": state["step"] + 1,
     })
     emit("agent_done", {"agent": "planner", "step": state["step"] + 1,

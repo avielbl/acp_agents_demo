@@ -68,6 +68,7 @@ def executor_agent(state: BusState) -> dict:
     emit("acp_message", {
         "sender": "executor", "receiver": "validator", "msg_type": "result",
         "content_preview": f"{len(all_items)} action items extracted",
+        "content": msg.content,
         "meta": msg.meta, "step": state["step"] + 1,
     })
     emit("agent_done", {"agent": "executor", "step": state["step"] + 1,

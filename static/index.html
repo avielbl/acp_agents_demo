@@ -767,6 +767,8 @@
     const card = document.createElement('div');
     card.className = 'msg-card';
     card.style.borderLeftColor = color;
+    const contentHtml = event.content ? `<details style="margin-top:6px; font-size:11px; cursor:pointer;"><summary style="color:var(--text-mid); user-select:none;">Show full message</summary><pre style="margin-top:6px; background:var(--surface2); padding:8px; border-radius:4px; overflow-x:auto; color:var(--text-mid); border: 1px solid var(--border2); white-space:pre-wrap; font-family:'Menlo', 'Consolas', monospace;">${esc(event.content)}</pre></details>` : '';
+
     card.innerHTML = `
       <div class="msg-card-top">
         <span style="color:${sColor};font-size:12px">${sName}</span>
@@ -777,6 +779,7 @@
         </span>
       </div>
       <div class="msg-preview">${esc(event.content_preview || '')}</div>
+      ${contentHtml}
     `;
     feed.insertBefore(card, feed.firstChild);
     document.getElementById('feed-count').textContent = feedCount;

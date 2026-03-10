@@ -53,6 +53,7 @@ def validator_agent(state: BusState) -> dict:
         emit("acp_message", {
             "sender": "validator", "receiver": "executor", "msg_type": "validation_fail",
             "content_preview": f"{len(issues)} issue(s) found — requesting retry {retry_count + 1}/{MAX_RETRIES}",
+            "content": msg.content,
             "meta": msg.meta, "step": state["step"] + 1,
         })
         emit("agent_done", {"agent": "validator", "step": state["step"] + 1,
@@ -85,6 +86,7 @@ def validator_agent(state: BusState) -> dict:
         emit("acp_message", {
             "sender": "validator", "receiver": "user", "msg_type": "validation_pass",
             "content_preview": f"{len(items)} items validated and delivered",
+            "content": msg.content,
             "meta": msg.meta, "step": state["step"] + 1,
         })
         emit("action_items", {"items": items})

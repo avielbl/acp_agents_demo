@@ -76,6 +76,8 @@ async def start_run(req: RunRequest) -> dict:
                 "item_count": len(final_state.get("action_items", [])),
             })
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             emit("error", {"message": str(exc)})
         finally:
             asyncio.run_coroutine_threadsafe(q.put(None), loop)
