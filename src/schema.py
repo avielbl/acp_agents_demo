@@ -48,3 +48,18 @@ class BusState(TypedDict):
     action_items: List[dict]
     validation_issues: List[str]
     retry_count: int
+
+
+def create_initial_state(transcript: str) -> BusState:
+    """Creates the starting BusState for a new pipeline run."""
+    return {
+        "goal": transcript,
+        "done": False,
+        "mailbox": [],
+        "active_role": "planner",
+        "step": 0,
+        "segments": [],
+        "action_items": [],
+        "validation_issues": [],
+        "retry_count": 0,
+    }

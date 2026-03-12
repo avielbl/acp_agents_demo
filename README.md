@@ -90,6 +90,7 @@ acp_agents_demo/
 │   ├── logger.py               # JSONL structured audit logger
 │   ├── graph.py                # LangGraph StateGraph + SqliteSaver
 │   ├── events.py               # Thread-safe SSE event emitter (ContextVar)
+│   ├── utils.py                # LLM response cleaning and JSON parsing helpers
 │   └── agents/
 │       ├── planner.py          # Segment transcript into topics
 │       ├── executor.py         # Extract action items per segment
@@ -194,81 +195,86 @@ Messages  : 5 total ACP messages exchanged
 
 ---
 
-## Runtime Artifacts
+---
 
-| Path | Description |
-|---|---|
-| `logs/acp_<ts>.jsonl` | One JSON line per `ACPMessage` — full audit trail |
-| `checkpoints/bus.sqlite` | LangGraph SQLite checkpoint — enables run resumption |
+## Technical Developer Guide
 
-Both are git-ignored. Inspect the log with:
-```bash
-cat logs/acp_*.jsonl | python -m json.tool --no-ensure-ascii | less
+This section provides a detailed walk-through of the project's internals for developers.
+
+### 🏗️ Architecture Overview
+
+The system is built using a modern AI-agent architecture:
+- **Backend**: FastAPI (Python) provides the web server and SSE (Server-Sent Events) streaming.
+- **Agent Orchestration**: LangGraph manages the state machine and agent transitions.
+- **Persistence**: SQLite-based checkpointer (`checkpoints/bus.sqlite`) saves every state transition.
+- **Frontend**: Vanilla HTML/JS with a dynamic SVG-based communication graph and real-time state inspector.
+
+### 📊 Data Modeling (`src/schema.py`)
+
+The system centers around two main structures:
+
+#### 1. `BusState` (The "Blackboard")
+This is the shared state passed between all agents.
+```python
+class BusState(TypedDict):
+    goal: str              # The initial transcript
+    done: bool             # Terminal flag
+    mailbox: Annotated[List[dict], operator.add] # History of ACPMessages
+    active_role: str       # Currently active agent
+    segments: List[str]    # Transcript chunks (Planner output)
+    action_items: List[dict] # Extracted items (Executor output)
+    retry_count: int       # Number of validation retries
+```
+
+#### 2. `ACPMessage` (The Protocol)
+Agents communicate using a standardized message format:
+```python
+class ACPMessage(BaseModel):
+    msg_id: str
+    ts: str
+    sender: Role
+    receiver: Role
+    msg_type: MsgType      # task, result, validation_pass/fail
+    content: str           # JSON payload
 ```
 
 ---
 
-## Key Design Patterns
+### 🤖 Agent Components
 
-### 1. Append-only Mailbox (reducer)
-`BusState.mailbox` uses `Annotated[List[dict], operator.add]` — LangGraph's reducer pattern ensures messages are appended, never overwritten, even across retries.
+#### 1. Planner (`src/agents/planner.py`)
+- **Role**: Meeting Analyst.
+- **Task**: Uses LLM to segment the raw transcript into topical chunks.
+- **Output**: Sets the `segments` list in the state and hands off to the **Executor**.
 
-### 2. Conditional Routing
-After the Validator node, `route_after_validator()` inspects `state["done"]` and routes back to Executor or exits to `END`. This is LangGraph's `add_conditional_edges` in action.
+#### 2. Executor (`src/agents/executor.py`)
+- **Role**: Item Extractor.
+- **Task**: Iterates through each segment and extracts action items (Description, Owner, Deadline).
+- **Retry Logic**: Can receive feedback from the Validator to correct previously identified issues.
 
-### 3. Feedback-Driven Re-extraction
-Validation issues are injected directly into the Executor's next prompt, giving the LLM precise, actionable feedback rather than starting from scratch.
-
-### 4. Stateless Agents
-Each agent function is a pure `(state) -> dict` — it reads from state and returns only the fields it modifies. LangGraph merges the deltas.
-
----
-
-## Web UI
-
-The demo ships with a single-page browser UI served by FastAPI:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Header: title + live run status                            │
-├──────────────────────┬──────────────────────────────────────┤
-│  Transcript input    │  Agent Communication Graph (SVG)     │
-│  + Upload / Run btn  │                                      │
-│                      │  [Planner] ──task──► [Executor]      │
-│                      │               ◄──retry──  ▼ result  │
-│                      │                       [Validator]    │
-│                      │                           │ pass     │
-│                      │                         [OUT]        │
-├──────────────────────┼──────────────────────────────────────┤
-│  ACP Message Log     │  Final Action Items Table            │
-│  (live, newest-top)  │  (populates on completion)           │
-└──────────────────────┴──────────────────────────────────────┘
-```
-
-**How it works:**
-1. The browser POSTs the transcript to `POST /run` → receives a `run_id`.
-2. It opens a **Server-Sent Events** stream at `GET /stream/{run_id}`.
-3. The pipeline runs in a `ThreadPoolExecutor` thread; agents call `emit()` via a `ContextVar`-injected emitter.
-4. Events are pushed into an `asyncio.Queue` and forwarded to the browser as named SSE events.
-5. The SVG graph animates `animateMotion` packet-dots along SVG paths for each `acp_message` event; agent nodes pulse while active.
-
-**SSE event types:** `agent_start`, `agent_done`, `acp_message`, `progress`, `action_items`, `done`, `error`.
+#### 3. Validator (`src/agents/validator.py`)
+- **Role**: Quality Gate.
+- **Task**: Synchronously validates the extracted items for missing fields or duplicates.
+- **Transitions**:
+  - If valid: Marks `done=True`.
+  - If invalid: Increments `retry_count` and sends a `validation_fail` message back to the **Executor**.
 
 ---
 
-## Dependencies
+### 🔄 Real-Time Event System (`src/events.py`)
 
-| Package | Purpose |
-|---|---|
-| `langgraph` | StateGraph, checkpointing, conditional routing |
-| `langgraph-checkpoint-sqlite` | SQLite checkpointer for LangGraph |
-| `langchain-core` | Base abstractions used by LangGraph |
-| `google-generativeai` | Gemini 2.0 Flash LLM client |
-| `pydantic` | `ACPMessage` and `ActionItem` validation |
-| `python-dotenv` | `.env` file loading |
-| `fastapi` | Web server and SSE streaming for the demo UI |
-| `uvicorn[standard]` | ASGI server |
-| `aiofiles` | Async static file serving |
+The UI updates in real-time without polling using **Server-Sent Events (SSE)**.
+
+1. **ContextVar Isolation**: `src/events.py` uses `ContextVar` to ensure that each request (run) sees its own event emitter, even in a multi-threaded FastAPI environment.
+2. **Intermediate States**: In `server.py`, we use `graph_app.stream(..., stream_mode="values")` to capture intermediate states as they happen.
+3. **SSE Mapping**: Backend events like `agent_start`, `acp_message`, and `state_update` are sent to the frontend where they trigger SVG animations and log updates.
+
+---
+
+### 💾 Persistence & Debugging
+
+- **Checkpoints**: Every step of the graph is recorded in `checkpoints/bus.sqlite`. This allows for time-travel debugging and resuming interrupted runs through the `--thread-id` flag.
+- **DB Inspector**: The built-in Database Inspector provides a raw view of these internal tables directly from the browser UI.
 
 ---
 

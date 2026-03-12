@@ -8,12 +8,17 @@ MAX_RETRIES = 2
 
 
 def validator_agent(state: BusState) -> dict:
+    """Validates extracted action items for missing owners, deadlines, or duplicates."""
     items = state.get("action_items", [])
     retry_count = state.get("retry_count", 0)
 
-    print(f"\n[Validator] Validating {len(items)} action items...")
-    emit("agent_start", {"agent": "validator", "step": state["step"] + 1,
-                         "message": f"Validating {len(items)} action items..."})
+    log_msg = f"Validating {len(items)} action items..."
+    print(f"\n[Validator] {log_msg}")
+    emit("agent_start", {
+        "agent": "validator", 
+        "step": state["step"] + 1,
+        "message": log_msg
+    })
 
     issues: list[str] = []
 

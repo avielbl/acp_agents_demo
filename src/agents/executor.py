@@ -1,31 +1,45 @@
-import json
-
 from src.events import emit
 from src.llm import generate
 from src.logger import log_message
 from src.schema import ACPMessage, BusState, MsgType, Role
+from src.utils import clean_llm_json
 
 
 def executor_agent(state: BusState) -> dict:
+    """Extracts action items from transcript segments."""
     segments = state["segments"]
     issues = state.get("validation_issues", [])
     retry = state.get("retry_count", 0)
 
     if issues:
-        print(f"\n[Executor] Re-extracting action items (retry {retry}). Issues to fix: {issues}")
-        emit("agent_start", {"agent": "executor", "step": state["step"] + 1, "retry": retry,
-                             "message": f"Re-extracting action items (retry {retry}/{2}). Fixing {len(issues)} issue(s)."})
+        log_msg = f"Re-extracting action items (retry {retry}/{2}). Fixing {len(issues)} issue(s)."
+        print(f"\n[Executor] {log_msg}")
+        emit("agent_start", {
+            "agent": "executor", 
+            "step": state["step"] + 1, 
+            "retry": retry,
+            "message": log_msg
+        })
     else:
-        print("\n[Executor] Extracting action items from each segment...")
-        emit("agent_start", {"agent": "executor", "step": state["step"] + 1, "retry": 0,
-                             "message": f"Extracting action items from {len(segments)} segment(s)..."})
+        log_msg = f"Extracting action items from {len(segments)} segment(s)..."
+        print(f"\n[Executor] {log_msg}")
+        emit("agent_start", {
+            "agent": "executor", 
+            "step": state["step"] + 1, 
+            "retry": 0,
+            "message": log_msg
+        })
 
     issues_str = "\n".join(f"- {i}" for i in issues) if issues else "None"
     all_items: list[dict] = []
 
     for idx, segment in enumerate(segments):
-        emit("progress", {"agent": "executor", "current": idx + 1, "total": len(segments),
-                          "message": f"Processing segment {idx + 1} of {len(segments)}..."})
+        emit("progress", {
+            "agent": "executor", 
+            "current": idx + 1, 
+            "total": len(segments),
+            "message": f"Processing segment {idx + 1} of {len(segments)}..."
+        })
 
         prompt = (
             "Extract all action items from the following meeting transcript segment. "
@@ -37,15 +51,11 @@ def executor_agent(state: BusState) -> dict:
             f"Segment:\n{segment}"
         )
 
-        raw = generate(prompt)
-
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.splitlines()
-            cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        raw_response = generate(prompt)
+        cleaned_json = clean_llm_json(raw_response)
 
         try:
-            items = json.loads(cleaned)
+            items = json.loads(cleaned_json)
         except json.JSONDecodeError:
             items = []
 

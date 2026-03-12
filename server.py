@@ -46,6 +46,95 @@ async def sample_transcript() -> PlainTextResponse:
     return PlainTextResponse(p.read_text(encoding="utf-8"))
 
 
+@app.get("/history/latest")
+async def get_latest_history() -> dict:
+    import sqlite3
+    db_path = Path("checkpoints/bus.sqlite")
+    if not db_path.exists():
+        return {"thread_id": None}
+    
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        # Find the thread with the most recent activity
+        cursor.execute("SELECT thread_id FROM checkpoints ORDER BY checkpoint_id DESC LIMIT 1")
+        res = cursor.fetchone()
+        conn.close()
+        return {"thread_id": res[0] if res else None}
+    except Exception:
+        return {"thread_id": None}
+
+
+@app.get("/history/steps/{thread_id}")
+async def get_history_steps(thread_id: str) -> dict:
+    try:
+        graph_app = build_graph()
+        config = {"configurable": {"thread_id": thread_id}}
+        history = list(graph_app.get_state_history(config))
+        
+        steps = []
+        for snapshot in reversed(history): # Walk forward in time
+            # snapshot.values is the BusState
+            # snapshot.metadata['source'] often indicates node
+            steps.append({
+                "state": snapshot.values,
+                "next": snapshot.next,
+                "metadata": snapshot.metadata
+            })
+        return {"steps": steps}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/clear-db")
+async def clear_database() -> dict:
+    db_path = Path("checkpoints/bus.sqlite")
+    if db_path.exists():
+        try:
+            # Close any connections if possible (though sqlite handles deletions okay usually)
+            db_path.unlink()
+            return {"status": "success", "message": "Database cleared"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to clear DB: {e}")
+    return {"status": "success", "message": "Database already clean"}
+
+
+@app.get("/debug/db")
+async def debug_db() -> dict:
+    import sqlite3
+    db_path = Path("checkpoints/bus.sqlite")
+    if not db_path.exists():
+        return {"error": "Database not found", "tables": {}}
+    
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Get all tables
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [row["name"] for row in cursor.fetchall()]
+        
+        data = {}
+        for table in tables:
+            cursor.execute(f"SELECT * FROM {table} LIMIT 100")
+            rows = cursor.fetchall()
+            fixed_rows = []
+            for row in rows:
+                d = dict(row)
+                # Convert bytes to hex strings for JSON serialization
+                for k, v in d.items():
+                    if isinstance(v, bytes):
+                        d[k] = f"<binary:{v.hex()[:64]}...>" if len(v) > 32 else v.hex()
+                fixed_rows.append(d)
+            data[table] = fixed_rows
+            
+        conn.close()
+        return {"tables": data}
+    except Exception as e:
+        return {"error": str(e), "tables": {}}
+
+
 @app.post("/run")
 async def start_run(req: RunRequest) -> dict:
     run_id = str(uuid.uuid4())
@@ -57,20 +146,20 @@ async def start_run(req: RunRequest) -> dict:
         emit = make_threadsafe_emitter(run_id, q, loop)
         set_emitter(emit)
         try:
-            initial_state = {
-                "goal": req.transcript,
-                "done": False,
-                "mailbox": [],
-                "active_role": "planner",
-                "step": 0,
-                "segments": [],
-                "action_items": [],
-                "validation_issues": [],
-                "retry_count": 0,
-            }
+            from src.schema import create_initial_state
+            initial_state = create_initial_state(req.transcript)
             graph_app = build_graph()
             config = {"configurable": {"thread_id": run_id}}
-            final_state = graph_app.invoke(initial_state, config=config)
+            
+            # Stream the execution to capture intermediate states
+            for event in graph_app.stream(initial_state, config=config, stream_mode="values"):
+                # Emit full state as a 'state_update' event
+                emit("state_update", {"state": event})
+            
+            # Final state check
+            final_snapshot = graph_app.get_state(config)
+            final_state = final_snapshot.values
+            
             emit("done", {
                 "step_count": final_state.get("step", 0),
                 "item_count": len(final_state.get("action_items", [])),

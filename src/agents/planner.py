@@ -1,16 +1,21 @@
-import json
-
 from src.events import emit
 from src.llm import generate
 from src.logger import log_message
 from src.schema import ACPMessage, BusState, MsgType, Role
+from src.utils import clean_llm_json
 
 
 def planner_agent(state: BusState) -> dict:
+    """Segments the meeting transcript into distinct discussion topics."""
     transcript = state["goal"]
-    print("\n[Planner] Segmenting transcript into discussion topics...")
-    emit("agent_start", {"agent": "planner", "step": state["step"] + 1,
-                         "message": "Segmenting transcript into discussion topics..."})
+    
+    log_msg = "Segmenting transcript into discussion topics..."
+    print(f"\n[Planner] {log_msg}")
+    emit("agent_start", {
+        "agent": "planner", 
+        "step": state["step"] + 1,
+        "message": log_msg
+    })
 
     prompt = (
         "You are a meeting analyst. Segment the following meeting transcript into distinct "
@@ -20,15 +25,11 @@ def planner_agent(state: BusState) -> dict:
         f"Transcript:\n{transcript}"
     )
 
-    raw = generate(prompt)
-
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    raw_response = generate(prompt)
+    cleaned_json = clean_llm_json(raw_response)
 
     try:
-        segments = json.loads(cleaned)
+        segments = json.loads(cleaned_json)
     except json.JSONDecodeError:
         # Fallback: treat whole transcript as one segment
         segments = [transcript]

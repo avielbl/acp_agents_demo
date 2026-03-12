@@ -81,17 +81,8 @@ def main() -> None:
     print(f"Thread ID : {thread_id}")
     print(f"Transcript: {transcript_path} ({len(transcript)} chars)")
 
-    initial_state = {
-        "goal": transcript,
-        "done": False,
-        "mailbox": [],
-        "active_role": "planner",
-        "step": 0,
-        "segments": [],
-        "action_items": [],
-        "validation_issues": [],
-        "retry_count": 0,
-    }
+    from src.schema import create_initial_state
+    initial_state = create_initial_state(transcript)
 
     app = build_graph()
     config = {"configurable": {"thread_id": thread_id}}
