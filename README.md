@@ -22,11 +22,11 @@ This demo implements all four patterns using open-source tools, keeping the code
 ## Architecture
 
 ```
-┌────────────┐    task msg     ┌──────────────┐    result msg    ┌─────────────┐
+┌────────────┐    task msg    ┌──────────────┐    result msg    ┌─────────────┐
 │   Planner  │ ─────────────► │   Executor   │ ───────────────► │  Validator  │
 │            │                │              │                  │             │
 │ Segments   │                │ Extracts     │  ◄─────────────  │ Validates   │
-│ transcript │                │ action items │  validation_fail  │ completeness│
+│ transcript │                │ action items │  validation_fail │ completeness│
 │ by topic   │                │ per segment  │                  │ & quality   │
 └────────────┘                └──────────────┘                  └─────────────┘
        │                             ▲                                  │
@@ -36,10 +36,10 @@ This demo implements all four patterns using open-source tools, keeping the code
        ▼
   Shared BusState (LangGraph StateGraph)
        │
-       ├── mailbox[]      append-only list of all ACPMessages
-       ├── segments[]     transcript chunks from Planner
-       ├── action_items[] structured items from Executor
-       └── validation_issues[] feedback from Validator
+       ├── mailbox[]            append-only list of all ACPMessages
+       ├── segments[]           transcript chunks from Planner
+       ├── action_items[]       structured items from Executor
+       └── validation_issues[]  feedback from Validator
 ```
 
 ### Agent Roles
