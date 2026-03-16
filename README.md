@@ -280,4 +280,4 @@ The UI updates in real-time without polling using **Server-Sent Events (SSE)**.
 
 ## License
 
-MIT
+[MIT](LICENSE)
