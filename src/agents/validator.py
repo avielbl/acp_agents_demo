@@ -1,8 +1,10 @@
 import json
 
+from acp_sdk.models import Message, MessagePart
+
 from src.events import emit
 from src.logger import log_message
-from src.schema import ACPMessage, BusState, MsgType, Role
+from src.schema import BusState
 
 MAX_RETRIES = 2
 
@@ -15,9 +17,9 @@ def validator_agent(state: BusState) -> dict:
     log_msg = f"Validating {len(items)} action items..."
     print(f"\n[Validator] {log_msg}")
     emit("agent_start", {
-        "agent": "validator", 
+        "agent": "validator",
         "step": state["step"] + 1,
-        "message": log_msg
+        "message": log_msg,
     })
 
     issues: list[str] = []
@@ -45,28 +47,47 @@ def validator_agent(state: BusState) -> dict:
         for issue in issues:
             print(f"  - {issue}")
 
-        msg = ACPMessage(
-            sender=Role.validator,
-            receiver=Role.executor,
-            msg_type=MsgType.validation_fail,
-            content=json.dumps(issues),
-            meta={"issue_count": len(issues), "retry": retry_count + 1},
-            trace={"step": state["step"] + 1},
+        msg = Message(
+            role="agent",
+            parts=[
+                MessagePart(
+                    name="routing",
+                    content_type="application/json",
+                    content=json.dumps({
+                        "sender": "validator",
+                        "receiver": "executor",
+                        "msg_type": "validation_fail",
+                        "meta": {"issue_count": len(issues), "retry": retry_count + 1},
+                        "step": state["step"] + 1,
+                    }),
+                ),
+                MessagePart(
+                    name="payload",
+                    content_type="application/json",
+                    content=json.dumps(issues),
+                ),
+            ],
         )
         log_message(msg)
 
         emit("acp_message", {
-            "sender": "validator", "receiver": "executor", "msg_type": "validation_fail",
+            "sender": "validator",
+            "receiver": "executor",
+            "msg_type": "validation_fail",
             "content_preview": f"{len(issues)} issue(s) found — requesting retry {retry_count + 1}/{MAX_RETRIES}",
-            "content": msg.content,
-            "meta": msg.meta, "step": state["step"] + 1,
+            "content": json.dumps(issues),
+            "meta": {"issue_count": len(issues), "retry": retry_count + 1},
+            "step": state["step"] + 1,
         })
-        emit("agent_done", {"agent": "validator", "step": state["step"] + 1,
-                            "summary": f"{len(issues)} issue(s) found. Retry {retry_count + 1}/{MAX_RETRIES}."})
+        emit("agent_done", {
+            "agent": "validator",
+            "step": state["step"] + 1,
+            "summary": f"{len(issues)} issue(s) found. Retry {retry_count + 1}/{MAX_RETRIES}.",
+        })
 
         return {
             "validation_issues": issues,
-            "mailbox": [msg.model_dump()],
+            "mailbox": [json.loads(msg.model_dump_json())],
             "active_role": "executor",
             "step": state["step"] + 1,
             "retry_count": retry_count + 1,
@@ -78,29 +99,48 @@ def validator_agent(state: BusState) -> dict:
         else:
             print(f"[Validator] All {len(items)} action items passed validation.")
 
-        msg = ACPMessage(
-            sender=Role.validator,
-            receiver=Role.user,
-            msg_type=MsgType.validation_pass,
-            content=json.dumps(items),
-            meta={"item_count": len(items), "remaining_issues": len(issues)},
-            trace={"step": state["step"] + 1},
+        msg = Message(
+            role="agent",
+            parts=[
+                MessagePart(
+                    name="routing",
+                    content_type="application/json",
+                    content=json.dumps({
+                        "sender": "validator",
+                        "receiver": "user",
+                        "msg_type": "validation_pass",
+                        "meta": {"item_count": len(items), "remaining_issues": len(issues)},
+                        "step": state["step"] + 1,
+                    }),
+                ),
+                MessagePart(
+                    name="payload",
+                    content_type="application/json",
+                    content=json.dumps(items),
+                ),
+            ],
         )
         log_message(msg)
 
         emit("acp_message", {
-            "sender": "validator", "receiver": "user", "msg_type": "validation_pass",
+            "sender": "validator",
+            "receiver": "user",
+            "msg_type": "validation_pass",
             "content_preview": f"{len(items)} items validated and delivered",
-            "content": msg.content,
-            "meta": msg.meta, "step": state["step"] + 1,
+            "content": json.dumps(items),
+            "meta": {"item_count": len(items), "remaining_issues": len(issues)},
+            "step": state["step"] + 1,
         })
         emit("action_items", {"items": items})
-        emit("agent_done", {"agent": "validator", "step": state["step"] + 1,
-                            "summary": f"All {len(items)} items validated successfully."})
+        emit("agent_done", {
+            "agent": "validator",
+            "step": state["step"] + 1,
+            "summary": f"All {len(items)} items validated successfully.",
+        })
 
         return {
             "validation_issues": issues,
-            "mailbox": [msg.model_dump()],
+            "mailbox": [json.loads(msg.model_dump_json())],
             "active_role": "user",
             "step": state["step"] + 1,
             "done": True,

@@ -1,34 +1,7 @@
 import operator
-from enum import Enum
-from typing import Any, Annotated, Dict, List, Optional, TypedDict
-from pydantic import BaseModel, Field
-import uuid
-from datetime import datetime, timezone
+from typing import Annotated, List, Optional, TypedDict
 
-
-class Role(str, Enum):
-    planner = "planner"
-    executor = "executor"
-    validator = "validator"
-    user = "user"
-
-
-class MsgType(str, Enum):
-    task = "task"
-    result = "result"
-    validation_pass = "validation_pass"
-    validation_fail = "validation_fail"
-
-
-class ACPMessage(BaseModel):
-    msg_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    ts: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    sender: Role
-    receiver: Role
-    msg_type: MsgType
-    content: str
-    meta: Dict[str, Any] = Field(default_factory=dict)
-    trace: Dict[str, Any] = Field(default_factory=dict)
+from pydantic import BaseModel
 
 
 class ActionItem(BaseModel):

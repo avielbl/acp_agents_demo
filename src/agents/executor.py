@@ -1,7 +1,11 @@
+import json
+
+from acp_sdk.models import Message, MessagePart
+
 from src.events import emit
 from src.llm import generate
 from src.logger import log_message
-from src.schema import ACPMessage, BusState, MsgType, Role
+from src.schema import BusState
 from src.utils import clean_llm_json
 
 
@@ -15,19 +19,19 @@ def executor_agent(state: BusState) -> dict:
         log_msg = f"Re-extracting action items (retry {retry}/{2}). Fixing {len(issues)} issue(s)."
         print(f"\n[Executor] {log_msg}")
         emit("agent_start", {
-            "agent": "executor", 
-            "step": state["step"] + 1, 
+            "agent": "executor",
+            "step": state["step"] + 1,
             "retry": retry,
-            "message": log_msg
+            "message": log_msg,
         })
     else:
         log_msg = f"Extracting action items from {len(segments)} segment(s)..."
         print(f"\n[Executor] {log_msg}")
         emit("agent_start", {
-            "agent": "executor", 
-            "step": state["step"] + 1, 
+            "agent": "executor",
+            "step": state["step"] + 1,
             "retry": 0,
-            "message": log_msg
+            "message": log_msg,
         })
 
     issues_str = "\n".join(f"- {i}" for i in issues) if issues else "None"
@@ -35,10 +39,10 @@ def executor_agent(state: BusState) -> dict:
 
     for idx, segment in enumerate(segments):
         emit("progress", {
-            "agent": "executor", 
-            "current": idx + 1, 
+            "agent": "executor",
+            "current": idx + 1,
             "total": len(segments),
-            "message": f"Processing segment {idx + 1} of {len(segments)}..."
+            "message": f"Processing segment {idx + 1} of {len(segments)}...",
         })
 
         prompt = (
@@ -65,28 +69,47 @@ def executor_agent(state: BusState) -> dict:
 
     print(f"[Executor] Extracted {len(all_items)} action items total.")
 
-    msg = ACPMessage(
-        sender=Role.executor,
-        receiver=Role.validator,
-        msg_type=MsgType.result,
-        content=json.dumps(all_items),
-        meta={"item_count": len(all_items), "retry": retry},
-        trace={"step": state["step"] + 1},
+    msg = Message(
+        role="agent",
+        parts=[
+            MessagePart(
+                name="routing",
+                content_type="application/json",
+                content=json.dumps({
+                    "sender": "executor",
+                    "receiver": "validator",
+                    "msg_type": "result",
+                    "meta": {"item_count": len(all_items), "retry": retry},
+                    "step": state["step"] + 1,
+                }),
+            ),
+            MessagePart(
+                name="payload",
+                content_type="application/json",
+                content=json.dumps(all_items),
+            ),
+        ],
     )
     log_message(msg)
 
     emit("acp_message", {
-        "sender": "executor", "receiver": "validator", "msg_type": "result",
+        "sender": "executor",
+        "receiver": "validator",
+        "msg_type": "result",
         "content_preview": f"{len(all_items)} action items extracted",
-        "content": msg.content,
-        "meta": msg.meta, "step": state["step"] + 1,
+        "content": json.dumps(all_items),
+        "meta": {"item_count": len(all_items), "retry": retry},
+        "step": state["step"] + 1,
     })
-    emit("agent_done", {"agent": "executor", "step": state["step"] + 1,
-                        "summary": f"Extracted {len(all_items)} action items."})
+    emit("agent_done", {
+        "agent": "executor",
+        "step": state["step"] + 1,
+        "summary": f"Extracted {len(all_items)} action items.",
+    })
 
     return {
         "action_items": all_items,
-        "mailbox": [msg.model_dump()],
+        "mailbox": [json.loads(msg.model_dump_json())],
         "active_role": "validator",
         "step": state["step"] + 1,
     }

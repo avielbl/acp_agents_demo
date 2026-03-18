@@ -32,19 +32,7 @@ def build_graph():
         {END: END, "executor": "executor"},
     )
 
-    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-    
     conn = sqlite3.connect("checkpoints/bus.sqlite", check_same_thread=False)
-    
-    # Silence msgpack warnings and allow deserialization for our custom types
-    # The error message specifically asks for the [('module', 'class')] format
-    serde = JsonPlusSerializer(allowed_msgpack_modules=[
-        ("src.schema", "Role"),
-        ("src.schema", "MsgType"),
-        ("src.schema", "ACPMessage"),
-        ("src.schema", "ActionItem")
-    ])
-    checkpointer = SqliteSaver(conn, serde=serde)
-    
+    checkpointer = SqliteSaver(conn)
     app = graph.compile(checkpointer=checkpointer)
     return app

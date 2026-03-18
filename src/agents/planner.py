@@ -1,20 +1,24 @@
+import json
+
+from acp_sdk.models import Message, MessagePart
+
 from src.events import emit
 from src.llm import generate
 from src.logger import log_message
-from src.schema import ACPMessage, BusState, MsgType, Role
+from src.schema import BusState
 from src.utils import clean_llm_json
 
 
 def planner_agent(state: BusState) -> dict:
     """Segments the meeting transcript into distinct discussion topics."""
     transcript = state["goal"]
-    
+
     log_msg = "Segmenting transcript into discussion topics..."
     print(f"\n[Planner] {log_msg}")
     emit("agent_start", {
-        "agent": "planner", 
+        "agent": "planner",
         "step": state["step"] + 1,
-        "message": log_msg
+        "message": log_msg,
     })
 
     prompt = (
@@ -31,33 +35,51 @@ def planner_agent(state: BusState) -> dict:
     try:
         segments = json.loads(cleaned_json)
     except json.JSONDecodeError:
-        # Fallback: treat whole transcript as one segment
         segments = [transcript]
 
     print(f"[Planner] Identified {len(segments)} topic segments.")
 
-    msg = ACPMessage(
-        sender=Role.planner,
-        receiver=Role.executor,
-        msg_type=MsgType.task,
-        content=json.dumps(segments),
-        meta={"segment_count": len(segments)},
-        trace={"step": state["step"] + 1},
+    msg = Message(
+        role="agent",
+        parts=[
+            MessagePart(
+                name="routing",
+                content_type="application/json",
+                content=json.dumps({
+                    "sender": "planner",
+                    "receiver": "executor",
+                    "msg_type": "task",
+                    "meta": {"segment_count": len(segments)},
+                    "step": state["step"] + 1,
+                }),
+            ),
+            MessagePart(
+                name="payload",
+                content_type="application/json",
+                content=json.dumps(segments),
+            ),
+        ],
     )
     log_message(msg)
 
     emit("acp_message", {
-        "sender": "planner", "receiver": "executor", "msg_type": "task",
+        "sender": "planner",
+        "receiver": "executor",
+        "msg_type": "task",
         "content_preview": f"{len(segments)} segments dispatched",
-        "content": msg.content,
-        "meta": msg.meta, "step": state["step"] + 1,
+        "content": json.dumps(segments),
+        "meta": {"segment_count": len(segments)},
+        "step": state["step"] + 1,
     })
-    emit("agent_done", {"agent": "planner", "step": state["step"] + 1,
-                        "summary": f"Identified {len(segments)} topic segments."})
+    emit("agent_done", {
+        "agent": "planner",
+        "step": state["step"] + 1,
+        "summary": f"Identified {len(segments)} topic segments.",
+    })
 
     return {
         "segments": segments,
-        "mailbox": [msg.model_dump()],
+        "mailbox": [json.loads(msg.model_dump_json())],
         "active_role": "executor",
         "step": state["step"] + 1,
     }

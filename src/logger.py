@@ -1,9 +1,7 @@
-import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.schema import ACPMessage
+from acp_sdk.models import Message
 
 _log_file = None
 
@@ -17,9 +15,9 @@ def _get_log_file():
     return _log_file
 
 
-def log_message(msg: ACPMessage) -> None:
+def log_message(msg: Message) -> None:
     f = _get_log_file()
-    f.write(json.dumps(msg.model_dump()) + "\n")
+    f.write(msg.model_dump_json() + "\n")
     f.flush()
 
 

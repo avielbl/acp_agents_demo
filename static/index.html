@@ -823,6 +823,28 @@
     </main>
 
     <!-- tray remains hidden/collapsible -->
+    <div class="panel results-panel">
+      <div class="panel-hdr">
+        Action Items
+        <span id="items-count" class="badge" style="margin-left:8px">0</span>
+      </div>
+      <div class="results-scroll" style="overflow-y:auto; padding:10px;">
+        <div id="empty-results" class="empty-state">Run the pipeline to see action items.</div>
+        <table id="items-table" style="display:none">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Description</th>
+              <th>Owner</th>
+              <th>Deadline</th>
+              <th>Seg</th>
+            </tr>
+          </thead>
+          <tbody id="items-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <details class="panel" style="border-top:2px solid var(--border); background:var(--surface);">
       <summary class="panel-hdr" style="cursor:pointer; user-select:none;">
         Persistent Store (Database Inspector)
@@ -878,6 +900,7 @@
     let historySteps = []; // Array of {state, next, metadata}
     let isLive = true;
     let currentThreadId = localStorage.getItem('acp_thread_id');
+    const _msgContent = {}; // id → raw content string, avoids injecting JSON into HTML attributes
 
     // ── File upload ─────────────────────────────────────────
     function loadFile(e) {
@@ -943,13 +966,11 @@
       if (old) old.remove();
 
       if (active) {
-        const cx = NODE_CX[agentName];
-        const cy = NODE_CY[agentName];
         const color = AGENT_COLORS_HEX[agentName] || '#fff';
 
         const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        ring.setAttribute('cx', cx);
-        ring.setAttribute('cy', cy);
+        ring.setAttribute('cx', 0);
+        ring.setAttribute('cy', 0);
         ring.setAttribute('r', '54');
         ring.setAttribute('fill', 'none');
         ring.setAttribute('stroke', color);
@@ -975,6 +996,25 @@
     }
 
     // ── Message feed ─────────────────────────────────────────
+    function acpMsgToFeedEvent(msg) {
+      if (!msg || !msg.parts) return msg; // pass-through if already event format
+      const routingPart = msg.parts.find(p => p.name === 'routing');
+      const payloadPart = msg.parts.find(p => p.name === 'payload');
+      if (!routingPart) return msg;
+      const routing = JSON.parse(routingPart.content);
+      const content = payloadPart ? payloadPart.content : '';
+      const meta = routing.meta || {};
+      const preview = Object.entries(meta).map(([k,v]) => `${k}: ${v}`).join(', ');
+      return {
+        sender: routing.sender,
+        receiver: routing.receiver,
+        msg_type: routing.msg_type,
+        content_preview: preview,
+        content: content,
+        meta: meta,
+      };
+    }
+
     function addToFeed(event) {
       const feed = document.getElementById('feed');
       const empty = feed.querySelector('.empty-state');
@@ -993,6 +1033,7 @@
 
       // Create unique container for JSON viewer
       const jsonId = `msg-json-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      if (event.content) _msgContent[jsonId] = event.content;
 
       card.innerHTML = `
       <div class="msg-card-top">
@@ -1005,7 +1046,7 @@
       </div>
       <div class="msg-preview">${esc(event.content_preview || '')}</div>
       ${event.content ? `
-        <details style="margin-top:6px; font-size:11px; cursor:pointer;" ontoggle="if(this.open) renderMsgJson('${jsonId}', ${JSON.stringify(event.content).replace(/'/g, "\\'")})">
+        <details style="margin-top:6px; font-size:11px; cursor:pointer;" ontoggle="if(this.open) renderMsgJson('${jsonId}')">
           <summary style="color:var(--text-mid); user-select:none;">Show full message</summary>
           <div id="${jsonId}" class="json-tree" style="margin-top:8px; background:var(--surface2); padding:10px; border-radius:4px; border: 1px solid var(--border2);"></div>
         </details>` : ''}
@@ -1017,11 +1058,12 @@
     function renderMsgJson(id, content) {
       const el = document.getElementById(id);
       if (!el || el.innerHTML !== '') return;
+      const raw = content !== undefined ? content : _msgContent[id];
       try {
-        const data = typeof content === 'string' ? JSON.parse(content) : content;
+        const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
         renderJSON(data, el);
       } catch (e) {
-        el.textContent = content;
+        el.textContent = raw;
       }
     }
 
@@ -1213,9 +1255,9 @@
       feed.innerHTML = '';
       feedCount = 0;
 
-      // mailbox is in state
+      // mailbox is in state — entries are ACP SDK Message dicts, convert for addToFeed
       const messages = state.mailbox || [];
-      messages.forEach(msg => addToFeed(msg));
+      messages.forEach(msg => addToFeed(acpMsgToFeedEvent(msg)));
 
       // Show action items if available
       if (state.action_items && state.action_items.length > 0) {
@@ -1340,7 +1382,7 @@
         const es = new EventSource(`/stream/${run_id}`);
         currentES = es;
 
-        ['agent_start', 'agent_done', 'acp_message', 'progress', 'action_items', 'done', 'error']
+        ['agent_start', 'agent_done', 'acp_message', 'progress', 'action_items', 'state_update', 'done', 'error']
           .forEach(t => es.addEventListener(t, e => {
             try { handleEvent(t, JSON.parse(e.data)); }
             catch (err) { console.error('Event parse error:', t, err); }
