@@ -1,8 +1,8 @@
 # ACP Multi-Agent Demo: Meeting Transcript → Action Item Tracker
 
-A toy but production-shaped demo of a **multi-agent communication system** inspired by the [Agent Communication Protocol (ACP)](https://agentcommunicationprotocol.dev/) pattern described in the MarkTechPost article on production-grade multi-agent architectures.
+A production-shaped demo of a **distributed multi-agent system** built on the [Agent Communication Protocol (ACP)](https://agentcommunicationprotocol.dev/) SDK.
 
-Three specialised [LangGraph](https://github.com/langchain-ai/langgraph) agents — **Planner**, **Executor**, and **Validator** — collaborate through a shared message bus to transform a raw meeting transcript into a clean, validated list of action items.
+Three specialised agents — **Planner**, **Executor**, and **Validator** — each run as an **independent ACP microservice** and communicate over HTTP, orchestrated by a [LangGraph](https://github.com/langchain-ai/langgraph) state machine. Together they transform a raw meeting transcript into a clean, validated list of action items.
 
 ---
 
@@ -21,25 +21,39 @@ This demo implements all four patterns using open-source tools, keeping the code
 
 ## Architecture
 
+### Distributed Microservice Architecture
+
+Each agent runs as a standalone ACP HTTP server. The LangGraph orchestrator calls them over the network:
+
 ```
-┌────────────┐    task msg    ┌──────────────┐    result msg    ┌─────────────┐
-│   Planner  │ ─────────────► │   Executor   │ ───────────────► │  Validator  │
-│            │                │              │                  │             │
-│ Segments   │                │ Extracts     │  ◄─────────────  │ Validates   │
-│ transcript │                │ action items │  validation_fail │ completeness│
-│ by topic   │                │ per segment  │                  │ & quality   │
-└────────────┘                └──────────────┘                  └─────────────┘
-       │                             ▲                                  │
-       │                             │      retry (up to 2x)            │
-       │                             └──────────────────────────────────┘
-       │
-       ▼
-  Shared BusState (LangGraph StateGraph)
-       │
-       ├── mailbox[]            append-only list of all ACPMessages
-       ├── segments[]           transcript chunks from Planner
-       ├── action_items[]       structured items from Executor
-       └── validation_issues[]  feedback from Validator
+┌──────────────────────────────────────────────────────────────────┐
+│         Orchestrator  (LangGraph + FastAPI / CLI)                │
+│                                                                  │
+│  planner_agent()  ──── HTTP POST ──►  localhost:8001/runs        │
+│  executor_agent() ──── HTTP POST ──►  localhost:8002/runs        │
+│  validator_agent() ─── HTTP POST ──►  localhost:8003/runs        │
+│                                                                  │
+│  Shared BusState (LangGraph StateGraph + SQLite checkpoint)      │
+│    ├── mailbox[]           ACP messages exchanged                │
+│    ├── segments[]          Planner output                        │
+│    ├── action_items[]      Executor output                       │
+│    └── validation_issues[] Validator feedback                    │
+└──────────────────────────────────────────────────────────────────┘
+         │                    │                   │
+         ▼                    ▼                   ▼
+  ┌─────────────┐    ┌──────────────┐    ┌──────────────┐
+  │   Planner   │    │   Executor   │    │  Validator   │
+  │  :8001      │    │   :8002      │    │   :8003      │
+  │  ACP Server │    │  ACP Server  │    │  ACP Server  │
+  └─────────────┘    └──────────────┘    └──────────────┘
+```
+
+### Agent Message Flow
+
+```
+Planner ──task──► Executor ──result──► Validator
+                    ▲                      │
+                    └──── validation_fail ──┘  (retry up to 2×)
 ```
 
 ### Agent Roles
@@ -82,23 +96,28 @@ All messages are written to a **JSONL audit log** (`logs/acp_<timestamp>.jsonl`)
 
 ```
 acp_agents_demo/
+├── agents/                       # ACP microservice entry points
+│   ├── planner_service.py        # Planner ACP Server  (port 8001)
+│   ├── executor_service.py       # Executor ACP Server (port 8002)
+│   └── validator_service.py      # Validator ACP Server (port 8003)
 ├── data/
-│   └── sample_transcript.txt   # Realistic sprint planning transcript
+│   └── sample_transcript.txt     # Realistic sprint planning transcript
 ├── src/
-│   ├── schema.py               # ACPMessage, BusState, enums, ActionItem
-│   ├── llm.py                  # Gemini 2.0 Flash singleton
-│   ├── logger.py               # JSONL structured audit logger
-│   ├── graph.py                # LangGraph StateGraph + SqliteSaver
-│   ├── events.py               # Thread-safe SSE event emitter (ContextVar)
-│   ├── utils.py                # LLM response cleaning and JSON parsing helpers
+│   ├── schema.py                 # BusState, ActionItem TypedDicts
+│   ├── llm.py                    # Gemini 2.0 Flash singleton
+│   ├── logger.py                 # JSONL structured audit logger
+│   ├── graph.py                  # LangGraph StateGraph + SqliteSaver
+│   ├── events.py                 # Thread-safe SSE event emitter
+│   ├── utils.py                  # LLM response cleaning helpers
 │   └── agents/
-│       ├── planner.py          # Segment transcript into topics
-│       ├── executor.py         # Extract action items per segment
-│       └── validator.py        # Validate completeness, flag issues
+│       ├── planner.py            # Orchestrator node → calls :8001
+│       ├── executor.py           # Orchestrator node → calls :8002
+│       └── validator.py          # Orchestrator node → calls :8003
 ├── static/
-│   └── index.html              # Single-page demo UI (SVG graph + live feed)
-├── server.py                   # FastAPI server with SSE streaming
-├── main.py                     # CLI entry point
+│   └── index.html                # Single-page demo UI (SVG + live feed)
+├── start_agents.py               # Starts all 3 agent microservices
+├── server.py                     # FastAPI UI server with SSE streaming
+├── main.py                       # CLI entry point
 ├── requirements.txt
 └── .env.example
 ```
@@ -125,15 +144,34 @@ cp .env.example .env
 
 Get a free Gemini API key at [aistudio.google.com](https://aistudio.google.com/app/apikey).
 
-### 3. Launch the web UI (recommended)
+### 3. Start the agent microservices
+
+In a dedicated terminal, launch all three ACP agent servers:
+
+```bash
+python start_agents.py
+```
+
+This starts Planner (`:8001`), Executor (`:8002`), and Validator (`:8003`) as independent processes and waits until all are healthy.
+
+> You can also start them individually:
+> ```bash
+> python agents/planner_service.py
+> python agents/executor_service.py
+> python agents/validator_service.py
+> ```
+
+### 4. Launch the web UI (recommended)
+
+In a second terminal:
 
 ```bash
 uvicorn server:app --reload
 ```
 
-Then open **http://localhost:8000** in your browser. The sample transcript is pre-loaded — click **▶ Run Pipeline** to watch the agents communicate in real time.
+Then open **http://localhost:8000** in your browser. Click **▶ Run Pipeline** to watch the agents communicate in real time.
 
-### 4. Run the CLI instead
+### 5. Run the CLI instead
 
 ```bash
 python main.py
@@ -141,7 +179,7 @@ python main.py
 python main.py --transcript path/to/your/meeting.txt
 ```
 
-### 5. Resume a previous run (checkpointing)
+### 6. Resume a previous run (checkpointing)
 
 ```bash
 python main.py --thread-id <uuid-from-previous-run>
@@ -203,11 +241,62 @@ This section provides a detailed walk-through of the project's internals for dev
 
 ### 🏗️ Architecture Overview
 
-The system is built using a modern AI-agent architecture:
-- **Backend**: FastAPI (Python) provides the web server and SSE (Server-Sent Events) streaming.
-- **Agent Orchestration**: LangGraph manages the state machine and agent transitions.
+The system is built using a modern distributed AI-agent architecture:
+- **Agent Microservices**: Each agent (Planner, Executor, Validator) is a standalone HTTP process powered by the `acp-sdk` `Server` class.
+- **Agent Orchestration**: LangGraph manages state, routing, and retry logic. Each LangGraph node calls its corresponding agent over HTTP via the `acp-sdk` `Client`.
+- **Backend**: FastAPI provides the web UI server and SSE (Server-Sent Events) streaming.
 - **Persistence**: SQLite-based checkpointer (`checkpoints/bus.sqlite`) saves every state transition.
 - **Frontend**: Vanilla HTML/JS with a dynamic SVG-based communication graph and real-time state inspector.
+
+---
+
+### 🔌 ACP SDK Integration
+
+This demo uses the [ACP SDK](https://github.com/i-am-bee/acp-sdk) at two layers:
+
+#### Agent Servers (`acp_sdk.server.app.create_app`)
+
+Each agent is exposed as a real HTTP endpoint using the `create_app` function and the `@agent` decorator:
+
+```python
+import uvicorn
+from acp_sdk.server.agent import agent
+from acp_sdk.server.app import create_app
+from acp_sdk.models import Message, MessagePart
+
+@agent(name="planner", description="...")
+async def planner_agent(input: list[Message]) -> Message:
+    transcript = input[0].parts[0].content
+    # ... run LLM ...
+    return Message(role="agent", parts=[MessagePart(...)])
+
+if __name__ == "__main__":
+    app = create_app(planner_agent)
+    uvicorn.run(app, host="127.0.0.1", port=8001)
+```
+
+The SDK automatically exposes standard ACP REST endpoints:
+- `GET /agents` — list registered agents and their manifests
+- `POST /runs` — execute an agent (sync, async, or streaming)
+- `GET /ping` — health check
+
+#### Orchestrator Client (`acp_sdk.client.Client`)
+
+The LangGraph orchestrator calls each remote agent using the ACP `Client`:
+
+```python
+from acp_sdk.client import Client
+from acp_sdk.models import Message, MessagePart
+
+async with Client(base_url="http://127.0.0.1:8001") as client:
+    run = await client.run_sync(
+        Message(role="user", parts=[MessagePart(content_type="text/plain", content=transcript)]),
+        agent="planner",
+    )
+segments = json.loads(run.output[0].parts[0].content)
+```
+
+This replaces what was previously a plain Python function call with a real cross-process HTTP request — turning the monolith into a true distributed system.
 
 ### 📊 Data Modeling (`src/schema.py`)
 
