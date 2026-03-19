@@ -5,6 +5,7 @@ google-genai>=0.1
 pydantic>=2
 python-dotenv
 fastapi>=0.110
-uvicorn[standard]>=0.29
+uvicorn[standard]>=0.32
 aiofiles>=23
 acp-sdk>=1.0.3
+httpx>=0.27
