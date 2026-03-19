@@ -1171,15 +1171,19 @@
       if (!confirm('Are you sure you want to clear the entire database? This will reset all demo data.')) return;
       try {
         const res = await fetch('/clear-db', { method: 'POST' });
-        const data = await res.json();
-        if (data.status === 'success') {
+        // Handle failure to parse JSON or non-JSON error responses
+        const data = await res.json().catch(() => ({ detail: res.statusText || 'Unknown error' }));
+        
+        if (res.ok && data.status === 'success') {
           localStorage.removeItem('acp_thread_id');
           location.reload();
         } else {
-          alert('Failed to clear DB: ' + data.message);
+          // FastAPI HTTPException uses 'detail', our custom success response uses 'message'
+          const errorMsg = data.detail || data.message || 'Unknown error';
+          alert('Failed to clear DB: ' + errorMsg);
         }
       } catch (err) {
-        alert('Error clearing DB: ' + err.message);
+        alert('Error connecting to server: ' + err.message);
       }
     }
 

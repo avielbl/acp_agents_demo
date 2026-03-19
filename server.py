@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.events import make_threadsafe_emitter, set_emitter
-from src.graph import build_graph
+from src.graph import build_graph, close_db
 
 app = FastAPI(title="ACP Agents Demo")
 
@@ -88,10 +88,14 @@ async def get_history_steps(thread_id: str) -> dict:
 
 @app.post("/clear-db")
 async def clear_database() -> dict:
+    if active_runs:
+        raise HTTPException(status_code=400, detail="Cannot clear database while a run is active.")
+        
     db_path = Path("checkpoints/bus.sqlite")
     if db_path.exists():
         try:
-            # Close any connections if possible (though sqlite handles deletions okay usually)
+            # Explicitly close the shared connection before unlinking
+            close_db()
             db_path.unlink()
             return {"status": "success", "message": "Database cleared"}
         except Exception as e:
