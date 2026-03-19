@@ -1,5 +1,8 @@
+import src.patch_acp
 import json
 
+import httpx
+from acp_sdk.client import Client
 from acp_sdk.models import Message, MessagePart
 
 from src.events import emit
@@ -7,10 +10,11 @@ from src.logger import log_message
 from src.schema import BusState
 
 MAX_RETRIES = 2
+VALIDATOR_URL = "http://127.0.0.1:8003"
 
 
-def validator_agent(state: BusState) -> dict:
-    """Validates extracted action items for missing owners, deadlines, or duplicates."""
+async def validator_agent(state: BusState) -> dict:
+    """Calls the Validator ACP microservice to check action item completeness."""
     items = state.get("action_items", [])
     retry_count = state.get("retry_count", 0)
 
@@ -22,25 +26,24 @@ def validator_agent(state: BusState) -> dict:
         "message": log_msg,
     })
 
-    issues: list[str] = []
-
-    for i, item in enumerate(items):
-        if not item.get("owner"):
-            issues.append(f"Item {i} ('{item.get('description', '')}') is missing an owner.")
-
-    for i, item in enumerate(items):
-        if not item.get("deadline"):
-            issues.append(f"Item {i} ('{item.get('description', '')}') is missing a deadline.")
-
-    seen: dict[str, int] = {}
-    for i, item in enumerate(items):
-        desc = item.get("description", "").lower().strip()
-        if desc in seen:
-            issues.append(
-                f"Item {i} is a duplicate of item {seen[desc]}: '{item.get('description', '')}'."
+    async with Client(base_url=VALIDATOR_URL) as client:
+        try:
+            run = await client.run_sync(
+                Message(
+                    role="user",
+                    parts=[MessagePart(content_type="application/json", content=json.dumps(items))],
+                ),
+                agent="validator",
             )
-        else:
-            seen[desc] = i
+        except httpx.ConnectError:
+            raise RuntimeError(
+                f"Cannot reach the Validator microservice at {VALIDATOR_URL}. "
+                "Run 'python start_agents.py' first."
+            )
+
+    result = json.loads(run.output[0].parts[0].content)
+    passed: bool = result["passed"]
+    issues: list[str] = result["issues"]
 
     if issues and retry_count < MAX_RETRIES:
         print(f"[Validator] Found {len(issues)} issue(s). Requesting re-extraction (retry {retry_count + 1}/{MAX_RETRIES}).")

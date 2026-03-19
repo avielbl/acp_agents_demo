@@ -1,71 +1,58 @@
+import src.patch_acp
 import json
 
+import httpx
+from acp_sdk.client import Client
 from acp_sdk.models import Message, MessagePart
 
 from src.events import emit
-from src.llm import generate
 from src.logger import log_message
 from src.schema import BusState
-from src.utils import clean_llm_json
+
+EXECUTOR_URL = "http://127.0.0.1:8002"
 
 
-def executor_agent(state: BusState) -> dict:
-    """Extracts action items from transcript segments."""
+async def executor_agent(state: BusState) -> dict:
+    """Calls the Executor ACP microservice to extract action items from segments."""
     segments = state["segments"]
     issues = state.get("validation_issues", [])
     retry = state.get("retry_count", 0)
 
     if issues:
         log_msg = f"Re-extracting action items (retry {retry}/{2}). Fixing {len(issues)} issue(s)."
-        print(f"\n[Executor] {log_msg}")
-        emit("agent_start", {
-            "agent": "executor",
-            "step": state["step"] + 1,
-            "retry": retry,
-            "message": log_msg,
-        })
     else:
         log_msg = f"Extracting action items from {len(segments)} segment(s)..."
-        print(f"\n[Executor] {log_msg}")
-        emit("agent_start", {
-            "agent": "executor",
-            "step": state["step"] + 1,
-            "retry": 0,
-            "message": log_msg,
-        })
 
-    issues_str = "\n".join(f"- {i}" for i in issues) if issues else "None"
-    all_items: list[dict] = []
+    print(f"\n[Executor] {log_msg}")
+    emit("agent_start", {
+        "agent": "executor",
+        "step": state["step"] + 1,
+        "retry": retry,
+        "message": log_msg,
+    })
 
-    for idx, segment in enumerate(segments):
-        emit("progress", {
-            "agent": "executor",
-            "current": idx + 1,
-            "total": len(segments),
-            "message": f"Processing segment {idx + 1} of {len(segments)}...",
-        })
+    payload = json.dumps({"segments": segments, "validation_issues": issues})
 
-        prompt = (
-            "Extract all action items from the following meeting transcript segment. "
-            "Return ONLY a JSON array of objects with keys: "
-            '"description" (string), "owner" (string or null), "deadline" (string or null). '
-            "Every action item MUST have a non-null, non-empty owner and deadline. "
-            "Do not include any explanation or markdown — just the raw JSON array.\n\n"
-            f"Previous validation issues to fix (if any):\n{issues_str}\n\n"
-            f"Segment:\n{segment}"
-        )
-
-        raw_response = generate(prompt)
-        cleaned_json = clean_llm_json(raw_response)
-
+    async with Client(base_url=EXECUTOR_URL) as client:
         try:
-            items = json.loads(cleaned_json)
-        except json.JSONDecodeError:
-            items = []
+            run = await client.run_sync(
+                Message(
+                    role="user",
+                    parts=[MessagePart(content_type="application/json", content=payload)],
+                ),
+                agent="executor",
+            )
+        except httpx.ConnectError:
+            raise RuntimeError(
+                f"Cannot reach the Executor microservice at {EXECUTOR_URL}. "
+                "Run 'python start_agents.py' first."
+            )
 
-        for item in items:
-            item["segment_id"] = idx
-        all_items.extend(items)
+    result_content = run.output[0].parts[0].content
+    try:
+        all_items = json.loads(result_content)
+    except json.JSONDecodeError:
+        all_items = []
 
     print(f"[Executor] Extracted {len(all_items)} action items total.")
 

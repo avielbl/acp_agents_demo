@@ -1,16 +1,20 @@
+import src.patch_acp
 import json
 
+import httpx
+from acp_sdk.client import Client
 from acp_sdk.models import Message, MessagePart
 
 from src.events import emit
-from src.llm import generate
 from src.logger import log_message
 from src.schema import BusState
-from src.utils import clean_llm_json
 
 
-def planner_agent(state: BusState) -> dict:
-    """Segments the meeting transcript into distinct discussion topics."""
+PLANNER_URL = "http://127.0.0.1:8001"
+
+
+async def planner_agent(state: BusState) -> dict:
+    """Calls the Planner ACP microservice to segment the transcript."""
     transcript = state["goal"]
 
     log_msg = "Segmenting transcript into discussion topics..."
@@ -21,19 +25,24 @@ def planner_agent(state: BusState) -> dict:
         "message": log_msg,
     })
 
-    prompt = (
-        "You are a meeting analyst. Segment the following meeting transcript into distinct "
-        "discussion topics. Return ONLY a JSON array of strings, where each string is a "
-        "self-contained segment of the transcript covering one topic. "
-        "Do not include any explanation or markdown — just the raw JSON array.\n\n"
-        f"Transcript:\n{transcript}"
-    )
+    async with Client(base_url=PLANNER_URL) as client:
+        try:
+            run = await client.run_sync(
+                Message(
+                    role="user",
+                    parts=[MessagePart(content_type="text/plain", content=transcript)],
+                ),
+                agent="planner",
+            )
+        except httpx.ConnectError:
+            raise RuntimeError(
+                f"Cannot reach the Planner microservice at {PLANNER_URL}. "
+                "Run 'python start_agents.py' first."
+            )
 
-    raw_response = generate(prompt)
-    cleaned_json = clean_llm_json(raw_response)
-
+    result_content = run.output[0].parts[0].content
     try:
-        segments = json.loads(cleaned_json)
+        segments = json.loads(result_content)
     except json.JSONDecodeError:
         segments = [transcript]
 
